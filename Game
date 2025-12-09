@@ -1,540 +1,489 @@
 function MATHQUESTIONSCODE()
 
-    % BATTLESHIP GAME with Graphics and WASD/Mouse Controls
-    % Play against AI with 3 difficulty levels
+clc; clear; warning('off','all');
 
-    clc;
-    clear;
+% --- Initialize graphics ---
+my_scene = simpleGameEngine('Battleship.png', 84, 84);
 
-    warning('off','all');
+% Sprite indices
+blank_sprite=1; water_sprite=2; left_ship_sprite=3; horiz_ship_sprite=4;
+right_ship_sprite=5; top_ship_sprite=6; vert_ship_sprite=7; bot_ship_sprite=8;
+hit_sprite=9; miss_sprite=10;
 
-    % Initialize graphics
-    my_scene = simpleGameEngine('Battleship.png', 84, 84);
+% --- Select difficulty ---
+difficulty = mathBattleship_menuUI();
+if ~ismember(difficulty,[1,2,3]), return; end
 
-    % Set up sprite variables
-    blank_sprite     = 1;
-    water_sprite     = 2;
-    left_ship_sprite = 3;
-    horiz_ship_sprite= 4;
-    right_ship_sprite= 5;
-    top_ship_sprite  = 6;
-    vert_ship_sprite = 7;
-    bot_ship_sprite  = 8;
-    hit_sprite       = 9;
-    miss_sprite      = 10;
+% --- Game state matrices ---
+player_ships=zeros(10,10); cpu_ships=Setup();
+player_shots=zeros(10,10); cpu_shots=zeros(10,10);
 
-    % Game setup
+% Ship data
+ship_names={'Aircraft Carrier','Battleship','Submarine','Cruiser','PT Boat'};
+SHIP_NAMES={'AIRCRAFT CARRIER','BATTLESHIP','SUBMARINE','CRUISER','PT BOAT'};
+ship_lengths=[5 4 3 3 2];
 
-    difficulty = mathBattleship_menuUI();
-    if ismember(difficulty,[1,2,3])
+% Display boards
+board_display = water_sprite*ones(10,21);
+board_display(:,11)=blank_sprite;
+hitmiss_display = blank_sprite*ones(10,21);
+
+% AI state
+ai_state = struct('mode','hunt','targets',[],'last_hit',[]);
+
+% === UI Figure ===
+ui_fig=uifigure('Name','Math Battleship','Position',[50 400 600 400],'Color',[0.15 0.2 0.3]);
+
+msg_panel=uipanel(ui_fig,'Position',[10 250 580 140],'BackgroundColor',[0.2 0.25 0.35], ...
+    'BorderType','line','HighlightColor',[0.4 0.6 0.8]);
+msg_label=uilabel(msg_panel,'Position',[20 80 540 50],'Text','PLACE YOUR SHIPS','FontSize',24, ...
+    'FontWeight','bold','FontColor',[1 0.9 0.3],'HorizontalAlignment','center');
+status_label=uilabel(msg_panel,'Position',[20 20 540 50],'Text','Use WASD to move, Z to rotate, P to place', ...
+    'FontSize',14,'FontColor',[0.8 0.9 1],'HorizontalAlignment','center');
+
+score_panel=uipanel(ui_fig,'Position',[10 180 580 60],'BackgroundColor',[0.2 0.25 0.35], ...
+    'BorderType','line','HighlightColor',[0.4 0.6 0.8]);
+player_score_label=uilabel(score_panel,'Position',[20 15 250 30],'Text','Your Hits: 0', ...
+    'FontSize',16,'FontWeight','bold','FontColor',[0.3 1 0.3]);
+cpu_score_label=uilabel(score_panel,'Position',[310 15 250 30],'Text','Enemy Hits: 0', ...
+    'FontSize',16,'FontWeight','bold','FontColor',[1 0.3 0.3]);
+
+math_panel=uipanel(ui_fig,'Position',[10 10 580 160],'BackgroundColor',[0.25 0.3 0.4], ...
+    'BorderType','line','HighlightColor',[1 0.6 0.2],'Visible','off');
+math_question_label=uilabel(math_panel,'Position',[20 100 540 40],'Text','', ...
+    'FontSize',18,'FontWeight','bold','FontColor',[1 1 1],'HorizontalAlignment','center');
+math_input=uieditfield(math_panel,'numeric','Position',[180 55 240 35],'FontSize',16, ...
+    'HorizontalAlignment','center','BackgroundColor',[1 1 1]);
+math_submit_btn=uibutton(math_panel,'Position',[250 10 100 35],'Text','Submit', ...
+    'FontSize',14,'BackgroundColor',[0.2 0.8 0.3],'FontColor',[1 1 1], ...
+    'ButtonPushedFcn',@(src,event) handleMathSubmit(src,event));
+math_attempts_label=uilabel(math_panel,'Position',[20 55 220 30],'Text','Attempts: 0/3', ...
+    'FontSize',12,'FontColor',[1 0.8 0.3]);
+
+% === SHIP PLACEMENT ===
+updateMessage(msg_label,status_label,'PLACE YOUR SHIPS','Use WASD to move, Z to rotate, P to place');
+
+for ship_idx=1:5
+    ship_placed=false;
+    L=ship_lengths(ship_idx);
+
+    % Random initial placement
+    if ship_idx<=2 || randi(2)==1
+        is_vertical=false;
+        ship_row=randi(10);
+        ship_col=randi(11-L);
+        while any(board_display(ship_row,ship_col:(ship_col+L-1))~=water_sprite)
+            ship_row=randi(10); ship_col=randi(11-L);
+        end
+    else
+        is_vertical=true;
+        ship_row=randi(11-L); ship_col=randi(10);
+        while any(board_display(ship_row:(ship_row+L-1),ship_col)~=water_sprite)
+            ship_row=randi(11-L); ship_col=randi(10);
+        end
     end
 
-    % Initialize game boards
-    player_ships = zeros(10,10);
-    cpu_ships    = Setup();
-    player_shots = zeros(10,10);
-    cpu_shots    = zeros(10,10);
+    board_display=drawPlayerShip(board_display,ship_row,ship_col,L,is_vertical, ...
+        left_ship_sprite,horiz_ship_sprite,right_ship_sprite, ...
+        top_ship_sprite,vert_ship_sprite,bot_ship_sprite,water_sprite);
+    drawScene(my_scene,board_display,hitmiss_display);
 
-    % Ship definitions
-    ship_names   = {'Aircraft Carrier', 'Battleship', 'Submarine', 'Cruiser', 'PT Boat'};
-    ship_lengths = [5, 4, 3, 3, 2];
+    prev_k=''; button_sum=0;
+    updateMessage(msg_label,status_label, ...
+        sprintf('PLACING %s (Ship %d/5)',SHIP_NAMES{ship_idx},ship_idx), ...
+        sprintf('Length: %d | Move: WASD, Rotate: Z, Place: P',L));
 
-    % Initialize display boards
-    board_display   = water_sprite * ones(10,21);
-    board_display(:,11) = blank_sprite;
-    hitmiss_display = blank_sprite * ones(10,21);
+    while ~ship_placed
+        [r,c]=getMouseInput(my_scene);
+        k=getKeyboardInput(my_scene);
 
-    % AI state
-    ai_state = struct('mode', 'hunt', 'targets', [], 'last_hit', []);
+        prev_row=ship_row; prev_col=ship_col; prev_v=is_vertical;
 
-    % === PLAYER PLACES SHIPS ===
-    fprintf('\n=== PLACE YOUR SHIPS ===\n');
-    fprintf('Controls: WASD to move, Z to rotate, Click ship to confirm placement\n\n');
+        if ischar(k)
+            switch k
+                case 'z'
+                    if ~strcmp(prev_k,'z')
+                        button_sum=button_sum+1;
+                        if mod(button_sum,2)==1
+                            new_row=ship_row-floor(L/2);
+                            new_col=ship_col+floor(L/2);
+                            if new_row>=1 && new_row+L-1<=10
+                                board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                                ship_row=new_row; ship_col=new_col; is_vertical=true;
+                            else
+                                updateStatus(status_label,'Cannot rotate - off board!');
+                                button_sum=button_sum-1;
+                            end
+                        else
+                            new_row=ship_row+floor(L/2);
+                            new_col=ship_col-floor(L/2);
+                            if new_col>=1 && new_col+L-1<=10
+                                board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                                ship_row=new_row; ship_col=new_col; is_vertical=false;
+                            else
+                                updateStatus(status_label,'Cannot rotate - off board!');
+                                button_sum=button_sum-1;
+                            end
+                        end
+                    end
 
-    for ship_idx = 1:5
-        ship_placed = false;
+                case 'w'
+                    if ship_row>1
+                        board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                        ship_row=ship_row-1;
+                    end
 
-        % Random initial position
-        if ship_idx == 1 || ship_idx == 2
-            is_vertical = false;
-            % Start horizontal for longer ships
-            ship_row = randi(10);
-            ship_col = randi(10 - ship_lengths(ship_idx) + 1);
-            %Reroll until the spawning tiles are water tiles
-            while any(board_display(ship_row, ...
-                    ship_col:ship_col+ship_lengths(ship_idx)-1) ~= water_sprite)
-                    ship_row = randi(10);
-                    ship_col = randi(10 - ship_lengths(ship_idx) + 1);
+                case 's'
+                    if is_vertical
+                        if ship_row+L<=10
+                            board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                            ship_row=ship_row+1;
+                        end
+                    else
+                        if ship_row<10
+                            board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                            ship_row=ship_row+1;
+                        end
+                    end
+
+                case 'a'
+                    if ship_col>1
+                        board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                        ship_col=ship_col-1;
+                    end
+
+                case 'd'
+                    if is_vertical
+                        if ship_col<10
+                            board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                            ship_col=ship_col+1;
+                        end
+                    else
+                        if ship_col+L<=10
+                            board_display=clearShip(board_display,ship_row,ship_col,L,is_vertical,water_sprite);
+                            ship_col=ship_col+1;
+                        end
+                    end
+            end
+            prev_k=k;
+        end
+
+        % Overlap check
+        if checkOverlap(board_display,ship_row,ship_col,L,is_vertical,water_sprite,blank_sprite)
+            ship_row=prev_row; ship_col=prev_col; is_vertical=prev_v;
+            updateStatus(status_label,'Ship overlaps! Cannot move there.');
+        end
+
+        board_display=drawPlayerShip(board_display,ship_row,ship_col,L,is_vertical, ...
+            left_ship_sprite,horiz_ship_sprite,right_ship_sprite, ...
+            top_ship_sprite,vert_ship_sprite,bot_ship_sprite,water_sprite);
+        drawScene(my_scene,board_display,hitmiss_display);
+
+        if ischar(k) && strcmp(k,'p')
+            ship_placed=true;
+            if is_vertical
+                player_ships(ship_row:(ship_row+L-1),ship_col)=ship_idx;
+            else
+                player_ships(ship_row,ship_col:(ship_col+L-1))=ship_idx;
+            end
+            updateStatus(status_label,sprintf('%s placed successfully!',ship_names{ship_idx}));
+            pause(0.5);
+        end
+    end
+end
+
+updateMessage(msg_label,status_label,'ALL SHIPS PLACED!','Starting battle...');
+pause(2);
+
+% === MAIN GAME LOOP ===
+game_over=false; player_hits=0; cpu_hits=0;
+total_ship_cells=sum(ship_lengths);
+
+challenge_complete=false; answer_correct=false;
+attempts=0; max_attempts=3; valid_shot=false; correct_answer=0; question='';
+
+while ~game_over
+    % --- PLAYER TURN ---
+    updateMessage(msg_label,status_label,'YOUR TURN','Click right board to fire!');
+
+    valid_shot=false; target_selected=false;
+    while ~target_selected
+        [r,c]=getMouseInput(my_scene);
+        if c<=11||c>21, continue; end
+        ac=c-11;
+        if r<1||r>10||ac<1||ac>10, continue; end
+        if player_shots(r,ac)~=0
+            updateStatus(status_label,'Already fired there! Choose another square.');
+            continue;
+        end
+        target_selected=true;
+        updateStatus(status_label,sprintf('Target selected: (%d,%d)',r,ac));
+        pause(.5);
+    end
+
+    % --- MATH QUESTION ---
+    [question,correct_answer]=generateMathQuestion(difficulty);
+    challenge_complete=false; answer_correct=false; attempts=0; valid_shot=false;
+
+    math_panel.Visible='on';
+    math_question_label.Text=question;
+    math_input.Value=0;
+    math_attempts_label.Text='Attempts: 0/3';
+    math_attempts_label.FontColor=[1 .8 .3];
+
+    while ~challenge_complete
+        pause(.1); drawnow;
+    end
+
+    % --- PROCESS SHOT ---
+    if valid_shot
+        if cpu_ships(r,ac)>0
+            updateMessage(msg_label,status_label,'HIT!',sprintf('Hit at (%d,%d)!',r,ac));
+            player_shots(r,ac)=2; hitmiss_display(r,c)=hit_sprite;
+            player_hits=player_hits+1;
+            player_score_label.Text=sprintf('Your Hits: %d',player_hits);
+            if player_hits>=total_ship_cells
+                drawScene(my_scene,board_display,hitmiss_display);
+
+                 ui_win = uifigure('Name','You Win!','Color',[0.19,0.24,0.38]);
+                 
+                 win_label = uilabel(ui_win, ...
+                     'Position',[15 275 540 40], ...
+                     'Text','🎉 VICTORY! 🎉','You sank all enemy ships!', ...
+                     'FontSize',30, ...
+                     'FontWeight','bold', ...
+                     'FontColor',[1 0.9 0.3], ...
+                     'HorizontalAlignment','center');
+                 
+                 %updateMessage(msg_label,status_label,'🎉 VICTORY! 🎉','You sank all enemy ships!');
+                 game_over=true; break;
             end
         else
-            % Random orientation
-            if randi(2) == 1
-                is_vertical = false;
-                ship_row = randi(10);
-                ship_col = randi(10 - ship_lengths(ship_idx) + 1);
-                %Reroll until the spawning tiles are water tiles
-                while any(board_display(ship_row, ...
-                        ship_col:ship_col+ship_lengths(ship_idx)-1) ~= water_sprite)
-                    ship_row = randi(10);
-                    ship_col = randi(10 - ship_lengths(ship_idx) + 1);
-                end
-            else
-                is_vertical = true;
-                ship_row = randi(10 - ship_lengths(ship_idx) + 1);
-                ship_col = randi(10);
-                %Reroll until the spawning tiles are water tiles
-                while any(board_display(ship_row:ship_row+ship_lengths(ship_idx)-1, ...
-                        ship_col) ~= water_sprite)
-                    ship_row = randi(10 - ship_lengths(ship_idx) + 1);
-                    ship_col = randi(10);
-                end
-            end
+            updateMessage(msg_label,status_label,'MISS',sprintf('Missed at (%d,%d)',r,ac));
+            player_shots(r,ac)=1; hitmiss_display(r,c)=miss_sprite;
         end
-
-        % Draw initial ship position
-        board_display = drawPlayerShip(board_display, ship_row, ship_col, ...
-            ship_lengths(ship_idx), is_vertical, ...
-            left_ship_sprite, horiz_ship_sprite, right_ship_sprite, ...
-            top_ship_sprite, vert_ship_sprite, bot_ship_sprite, water_sprite);
-
-        drawScene(my_scene, board_display, hitmiss_display);
-
-        prev_k     = '';
-        button_sum = 0;
-
-        fprintf('Placing %s (length %d)\n', ship_names{ship_idx}, ship_lengths(ship_idx));
-
-        while ~ship_placed
-            [r, c] = getMouseInput(my_scene);
-            k      = getKeyboardInput(my_scene);
-
-            % Store previous position
-            prev_row      = ship_row;
-            prev_col      = ship_col;
-            prev_vertical = is_vertical;
-
-            % Handle keyboard input
-            if ischar(k)
-                if strcmp(k, 'z') && ~strcmp(prev_k, 'z')
-                    % Rotate ship
-                    button_sum = button_sum + 1;
-                    if mod(button_sum, 2) == 1
-                        % Switch to vertical
-                        new_row = ship_row - floor(ship_lengths(ship_idx)/2);
-                        new_col = ship_col + floor(ship_lengths(ship_idx)/2);
-
-                        if new_row >= 1 && new_row + ship_lengths(ship_idx) - 1 <= 10
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_row    = new_row;
-                            ship_col    = new_col;
-                            is_vertical = true;
-                        else
-                            fprintf('Cannot rotate - would go off board!\n');
-                            button_sum = button_sum - 1;
-                        end
-                    else
-                        % Switch to horizontal
-                        %new_row = ship_row + floor(ship_lengths(ship_idx)/2);
-                        %new_col = ship_col - floor(ship_lengths(ship_idx)/2);
-
-                        if new_col >= 1 && new_col + ship_lengths(ship_idx) - 1 <= 10
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_row    = new_row;
-                            ship_col    = new_col;
-                            is_vertical = false;
-                        else
-                            fprintf('Cannot rotate - would go off board!\n');
-                            button_sum = button_sum - 1;
-                        end
-                    end
-                elseif strcmp(k, 'w')
-                    % Move up
-                    if ship_row > 1
-                        board_display = clearShip(board_display, ship_row, ship_col, ...
-                            ship_lengths(ship_idx), is_vertical, water_sprite);
-                        ship_row = ship_row - 1;
-                    end
-                elseif strcmp(k, 's')
-                    % Move down
-                    if is_vertical
-                        if ship_row + ship_lengths(ship_idx) < 11
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_row = ship_row + 1;
-                        end
-                    else
-                        if ship_row < 10
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_row = ship_row + 1;
-                        end
-                    end
-                elseif strcmp(k, 'a')
-                    % Move left
-                    if ship_col > 1
-                        board_display = clearShip(board_display, ship_row, ship_col, ...
-                            ship_lengths(ship_idx), is_vertical, water_sprite);
-                        ship_col = ship_col - 1;
-                    end
-                elseif strcmp(k, 'd')
-                    % Move right
-                    if is_vertical
-                        if ship_col < 10
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_col = ship_col + 1;
-                        end
-                    else
-                        if ship_col + ship_lengths(ship_idx) < 11
-                            board_display = clearShip(board_display, ship_row, ship_col, ...
-                                ship_lengths(ship_idx), is_vertical, water_sprite);
-                            ship_col = ship_col + 1;
-                        end
-                    end
-                end
-                prev_k = k;
-            end
-
-            % Check for overlaps before drawing
-            if checkOverlap(board_display, ship_row, ship_col, ...
-                    ship_lengths(ship_idx), is_vertical, water_sprite, blank_sprite)
-                ship_row    = prev_row;
-                ship_col    = prev_col;
-                is_vertical = prev_vertical;
-                fprintf('Ship overlaps! Cannot move there.\n');
-            end
-
-            % Draw ship at new position
-            board_display = drawPlayerShip(board_display, ship_row, ship_col, ...
-                ship_lengths(ship_idx), is_vertical, ...
-                left_ship_sprite, horiz_ship_sprite, right_ship_sprite, ...
-                top_ship_sprite, vert_ship_sprite, bot_ship_sprite, water_sprite);
-
-            drawScene(my_scene, board_display, hitmiss_display);
-
-            % Confirm placement with 'P'
-            if ischar(k)
-                if strcmp(k, 'p')
-                    ship_placed = true;
-                end
-            end
-        end
+        drawScene(my_scene,board_display,hitmiss_display);
+        pause(1.5);
+    else
+        updateMessage(msg_label,status_label,'CANNON JAMMED','Failed math challenge - no shot');
+        pause(1.5);
     end
 
-    fprintf('All ships placed! Starting game...\n');
-    pause(2);
+    if game_over, break; end
 
-    % === MAIN GAME LOOP ===
-    game_over       = false;
-    player_hits     = 0;
-    cpu_hits        = 0;
-    total_ship_cells= sum(ship_lengths);
+    % --- AI TURN ---
+    updateMessage(msg_label,status_label,'ENEMY TURN','Enemy is firing...');
+    [ai_r,ai_c,ai_state]=ai_choose_target(cpu_shots,ai_state,difficulty);
+    pause(1);
 
-    while ~game_over
-        % --- PLAYER TURN ---
-        fprintf('\n=== YOUR TURN ===\n');
-        fprintf('Click on enemy waters (right board) to fire!\n');
-
-        valid_shot      = false;
-        target_selected = false;
-
-        % Select target
-        while ~target_selected
-            [r, c] = getMouseInput(my_scene);
-
-            if c <= 11 || c > 21, continue; end
-            actual_col = c - 11;
-
-            if r < 1 || r > 10 || actual_col < 1 || actual_col > 10, continue; end
-            if player_shots(r, actual_col) ~= 0
-                fprintf('Already fired there!\n');
-                continue;
-            end
-
-            target_selected = true;
-            fprintf('Target selected: (%d, %d)\n', r, actual_col);
+    if player_ships(ai_r,ai_c)>0
+        updateMessage(msg_label,status_label,'ENEMY HIT!',sprintf('Enemy hit at (%d,%d)!',ai_r,ai_c));
+        cpu_shots(ai_r,ai_c)=2; hitmiss_display(ai_r,ai_c)=hit_sprite;
+        cpu_hits=cpu_hits+1; cpu_score_label.Text=sprintf('Enemy Hits: %d',cpu_hits);
+        ai_state.last_hit=[ai_r ai_c];
+        if difficulty>=2
+            ai_state.mode='target';
+            ai_state=update_ai_targets(ai_state,ai_r,ai_c,cpu_shots);
         end
+        if cpu_hits >= total_ship_cells
+            drawScene(my_scene,board_display,hitmiss_display);
 
-        % --- MATH CHALLENGE ---
-        fprintf('\n--- MATH CHALLENGE ---\n');
-        [question, correct_answer] = generateMathQuestion(difficulty);
-        fprintf('%s\n', question);
+            ui_lose = uifigure('Name','You Lose...','Color',[0.19,0.24,0.38]);
 
-        answer_correct = false;
-        attempts       = 0;
-        max_attempts   = 3;
+            win_label = uilabel(ui_lose, ...
+            'Position',[15 275 540 40], ...
+            'Text','💀 DEFEAT 💀','The Enemy sank all your ships!', ...
+            'FontSize',30, ...
+            'FontWeight','bold', ...
+            'FontColor',[1 0.9 0.3], ...
+            'HorizontalAlignment','center');
 
-        while ~answer_correct && attempts < max_attempts
-            user_answer = input('Your answer: ');
-            attempts    = attempts + 1;
-
-            if abs(user_answer - correct_answer) < 0.01
-                fprintf('Correct! Firing shot...\n');
-                answer_correct = true;
-                valid_shot     = true;
-            else
-                if attempts < max_attempts
-                    fprintf('Incorrect! Try again. (%d/%d attempts)\n', attempts, max_attempts);
-                else
-                    fprintf('Incorrect! The answer was %.2f. Shot missed!\n', correct_answer);
-                    fprintf('You lose your turn.\n');
-                    valid_shot = false;
-                end
-            end
+            %updateMessage(msg_label,status_label,'💀 DEFEAT 💀','The Enemy sank all your ships!');
+            game_over=true;
         end
+    else
+        updateMessage(msg_label,status_label,'ENEMY MISS',sprintf('Enemy missed at (%d,%d)',ai_r,ai_c));
+        cpu_shots(ai_r,ai_c)=1; hitmiss_display(ai_r,ai_c)=miss_sprite;
+    end
+    drawScene(my_scene,board_display,hitmiss_display);
+    pause(1.5);
+end
 
-        % Process shot
-        if valid_shot
-            if cpu_ships(r, actual_col) > 0
-                fprintf('HIT at (%d, %d)!\n', r, actual_col);
-                player_shots(r, actual_col) = 2;
-                hitmiss_display(r, c)       = hit_sprite;
-                player_hits = player_hits + 1;
+updateMessage(msg_label,status_label,'GAME OVER','Thanks for playing!');
 
-                if player_hits >= total_ship_cells
-                    drawScene(my_scene, board_display, hitmiss_display);
-                    fprintf('\nCONGRATULATIONS! You won!\n');
-                    game_over = true;
-                    break;
-                end
-            else
-                fprintf('MISS at (%d, %d)\n', r, actual_col);
-                player_shots(r, actual_col) = 1;
-                hitmiss_display(r, c)       = miss_sprite;
-            end
-            drawScene(my_scene, board_display, hitmiss_display);
-            pause(1);
+% === NESTED CALLBACK ===
+function handleMathSubmit(~,~)
+    fprintf('Submit clicked. Attempts: %d\n',attempts);
+    user_answer=math_input.Value;
+    attempts=attempts+1;
+    fprintf('Entered: %.2f, Correct: %.2f\n',user_answer,correct_answer);
+
+    if abs(user_answer-correct_answer)<0.01
+        fprintf('Correct!\n');
+        math_attempts_label.Text='CORRECT! Firing shot...';
+        math_attempts_label.FontColor=[.3 1 .3];
+        answer_correct=true; valid_shot=true; challenge_complete=true;
+        pause(1); math_panel.Visible='off';
+    else
+        if attempts<max_attempts
+            fprintf('Incorrect. Attempts: %d/%d\n',attempts,max_attempts);
+            math_attempts_label.Text=sprintf(['INCORRECT! Try again.\n' ...
+                '       Attempts: %d/%d'],attempts,max_attempts);
+            math_attempts_label.FontColor=[1 .5 .2];
+            math_input.Value=0;
+        else
+            fprintf('Incorrect. Out of attempts.\n');
+            math_attempts_label.Text=sprintf(['INCORRECT! Answer was \n' ...
+                '       %.2f. Shot missed!'],correct_answer);
+            math_attempts_label.FontColor=[1 .3 .3];
+            valid_shot=false; challenge_complete=true;
+            pause(2); math_panel.Visible='off';
         end
+    end
+end
+end
 
-        if game_over, break; end
+% === UI HELPERS ===
+function updateMessage(msg_label,status_label,main,status)
+msg_label.Text=main; status_label.Text=status; drawnow;
+end
 
-        % --- AI TURN ---
-        fprintf('\n=== AI TURN ===\n');
-        [ai_row, ai_col, ai_state] = ai_choose_target(cpu_shots, ai_state, difficulty);
-        fprintf('AI fires at (%d, %d)... ', ai_row, ai_col);
-        pause(1);
+function updateStatus(status_label,msg)
+status_label.Text=msg; drawnow;
+end
 
-        if player_ships(ai_row, ai_col) > 0
-            fprintf('HIT!\n');
-            cpu_shots(ai_row, ai_col) = 2;
-            hitmiss_display(ai_row, ai_col) = hit_sprite;
-            cpu_hits = cpu_hits + 1;
-            ai_state.last_hit = [ai_row, ai_col];
-
-            if difficulty >= 2
-                ai_state.mode = 'target';
-                ai_state = update_ai_targets(ai_state, ai_row, ai_col, cpu_shots);
-            end
-
-            if cpu_hits >= total_ship_cells
-                drawScene(my_scene, board_display, hitmiss_display);
-                fprintf('\nGame Over! AI won!\n');
-                game_over = true;
+% === GAME HELPERS ===
+function cpu_ships=Setup()
+cpu_ships=zeros(10,10);
+lens=[5 4 3 3 2];
+for id=1:5
+    L=lens(id); placed=false;
+    while ~placed
+        horiz=randi([0 1]);
+        if horiz
+            r=randi(10); c=randi(11-L);
+            if sum(cpu_ships(r,c:(c+L-1)))==0
+                cpu_ships(r,c:(c+L-1))=id; placed=true;
             end
         else
-            fprintf('Miss!\n');
-            cpu_shots(ai_row, ai_col) = 1;
-            hitmiss_display(ai_row, ai_col) = miss_sprite;
-        end
-
-        drawScene(my_scene, board_display, hitmiss_display);
-        pause(1);
-    end
-
-    fprintf('\nGame Over!\n');
-end
-
-% === HELPER FUNCTIONS ===
-function board = drawPlayerShip(board, row, col, length, is_vertical, ...
-    left_s, horiz_s, right_s, top_s, vert_s, bot_s, ~)
-
-    if is_vertical
-        board(row, col) = top_s;
-        for i = 1:length-2
-            board(row+i, col) = vert_s;
-        end
-        board(row+length-1, col) = bot_s;
-    else
-        board(row, col) = left_s;
-        for i = 1:length-2
-            board(row, col+i) = horiz_s;
-        end
-        board(row, col+length-1) = right_s;
-    end
-end
-
-function board = clearShip(board, row, col, length, is_vertical, water_s)
-    if is_vertical
-        board(row:row+length-1, col) = water_s;
-    else
-        board(row, col:col+length-1) = water_s;
-    end
-end
-
-function overlap = checkOverlap(board, row, col, length, is_vertical, water_s, blank_s)
-    overlap = false;
-    if is_vertical
-        for i = 0:length-1
-            if board(row+i, col) ~= water_s && board(row+i, col) ~= blank_s
-                overlap = true; return;
-            end
-        end
-    else
-        for i = 0:length-1
-            if board(row, col+i) ~= water_s && board(row, col+i) ~= blank_s
-                overlap = true; return;
+            r=randi(11-L); c=randi(10);
+            if sum(cpu_ships(r:(r+L-1),c))==0
+                cpu_ships(r:(r+L-1),c)=id; placed=true;
             end
         end
     end
 end
+end
 
-function [row, col, ai_state] = ai_choose_target(cpu_shots, ai_state, difficulty)
-    switch difficulty
-        case 1
-            [row, col] = ai_random_shot(cpu_shots);
-        case 2
-            if strcmp(ai_state.mode, 'target') && ~isempty(ai_state.targets)
-                target = ai_state.targets(1, :);
-                ai_state.targets(1, :) = [];
-                row = target(1); col = target(2);
-            else
-                ai_state.mode = 'hunt';
-                [row, col] = ai_random_shot(cpu_shots);
-            end
-        case 3
-            if strcmp(ai_state.mode, 'target') && ~isempty(ai_state.targets)
-                target = ai_state.targets(1, :);
-                ai_state.targets(1, :) = [];
-                row = target(1); col = target(2);
-            else
-                ai_state.mode = 'hunt';
-                [row, col] = ai_checkerboard_shot(cpu_shots);
-            end
+function b=drawPlayerShip(b,r,c,L,v,left_s,h_s,right_s,top_s,vert_s,bot_s,~)
+if v
+    b(r,c)=top_s;
+    for i=1:L-2, b(r+i,c)=vert_s; end
+    b(r+L-1,c)=bot_s;
+else
+    b(r,c)=left_s;
+    for i=1:L-2, b(r,c+i)=h_s; end
+    b(r,c+L-1)=right_s;
+end
+end
+
+function b=clearShip(b,r,c,L,v,water)
+if v, b(r:r+L-1,c)=water;
+else, b(r,c:c+L-1)=water;
+end
+end
+
+function o=checkOverlap(b,r,c,L,v,water,blank)
+o=false;
+if v
+    for i=0:L-1
+        if b(r+i,c)~=water && b(r+i,c)~=blank, o=true; return; end
+    end
+else
+    for i=0:L-1
+        if b(r,c+i)~=water && b(r,c+i)~=blank, o=true; return; end
     end
 end
-
-function [row, col] = ai_random_shot(cpu_shots)
-    [rows, cols] = find(cpu_shots == 0);
-    idx = randi(length(rows));
-    row = rows(idx); col = cols(idx);
 end
 
-function [row, col] = ai_checkerboard_shot(cpu_shots)
-    for r = 1:10
-        for c = 1:10
-            if mod(r+c, 2) == 0 && cpu_shots(r, c) == 0
-                row = r; col = c; return;
-            end
+function [r,c,state]=ai_choose_target(shots,state,difficulty)
+switch difficulty
+    case 1
+        [r,c]=ai_random_shot(shots);
+    case 2
+        if strcmp(state.mode,'target') && ~isempty(state.targets)
+            t=state.targets(1,:); state.targets(1,:)=[];
+            r=t(1); c=t(2);
+        else
+            state.mode='hunt'; [r,c]=ai_random_shot(shots);
+        end
+    case 3
+        if strcmp(state.mode,'target') && ~isempty(state.targets)
+            t=state.targets(1,:); state.targets(1,:)=[];
+            r=t(1); c=t(2);
+        else
+            state.mode='hunt'; [r,c]=ai_checkerboard_shot(shots);
+        end
+end
+end
+
+function [r,c]=ai_random_shot(shots)
+[idxr,idxc]=find(shots==0);
+i=randi(length(idxr)); r=idxr(i); c=idxc(i);
+end
+
+function [r,c]=ai_checkerboard_shot(shots)
+for r=1:10
+    for c=1:10
+        if mod(r+c,2)==0 && shots(r,c)==0, return; end
+    end
+end
+[r,c]=ai_random_shot(shots);
+end
+
+function state=update_ai_targets(state,r,c,shots)
+dirs=[-1 0;1 0;0 -1;0 1];
+for i=1:4
+    nr=r+dirs(i,1); nc=c+dirs(i,2);
+    if nr>=1 && nr<=10 && nc>=1 && nc<=10 && shots(nr,nc)==0
+        if isempty(state.targets) || ~any(state.targets(:,1)==nr & state.targets(:,2)==nc)
+            state.targets=[state.targets; nr nc];
         end
     end
-    [row, col] = ai_random_shot(cpu_shots);
+end
 end
 
-function ai_state = update_ai_targets(ai_state, row, col, cpu_shots)
-    directions = [-1 0; 1 0; 0 -1; 0 1];
-    for i = 1:size(directions, 1)
-        new_row = row + directions(i, 1);
-        new_col = col + directions(i, 2);
-        if new_row >= 1 && new_row <= 10 && new_col >= 1 && new_col <= 10
-            if cpu_shots(new_row, new_col) == 0
-                if isempty(ai_state.targets) || ...
-                   ~any(ai_state.targets(:,1) == new_row & ai_state.targets(:,2) == new_col)
-                    ai_state.targets = [ai_state.targets; new_row, new_col];
-                end
-            end
+function [q,a]=generateMathQuestion(d)
+switch d
+    case 1
+        op=randi(4);
+        switch op
+            case 1, a1=randi(50); b1=randi(50); q=sprintf('What is %d + %d?',a1,b1); a=a1+b1;
+            case 2, a1=randi([20 100]); b1=randi([1 a1-1]); q=sprintf('What is %d - %d?',a1,b1); a=a1-b1;
+            case 3, a1=randi(12); b1=randi(12); q=sprintf('What is %d × %d?',a1,b1); a=a1*b1;
+            case 4, b1=randi(12); a=randi(12); x=b1*a; q=sprintf('What is %d ÷ %d?',x,b1);
         end
-    end
+    case 2
+        op=randi(5);
+        switch op
+            case 1, a1=randi(20); b1=randi(20); c1=randi(10); q=sprintf('What is (%d + %d) × %d?',a1,b1,c1); a=(a1+b1)*c1;
+            case 2, w=randi([50 200]); p=randi([10 90]); q=sprintf('What is %d%% of %d?',p,w); a=(p/100)*w;
+            case 3, a1=randi(15); q=sprintf('What is %d²?',a1); a=a1^2;
+            case 4, x=randi(50); a1=randi(30); b1=x+a1; q=sprintf('Solve for x: x + %d = %d',a1,b1); a=x;
+            case 5, a1=randi(50); b1=randi(50); c1=randi(50); q=sprintf('Average of %d,%d,%d?',a1,b1,c1); a=(a1+b1+c1)/3;
+        end
+    case 3
+        op=randi(5);
+        switch op
+            case 1, A=randi(5); B=randi(10); C=randi(20); X=randi(10);
+                q=sprintf('%dx² + %dx + %d, x=%d',A,B,C,X); a=A*X^2+B*X+C;
+            case 2, B=randi([2 5]); E=randi([3 6]); q=sprintf('What is %d^%d?',B,E); a=B^E;
+            case 3, a1=randi(10); b1=randi(10); c1=randi(10); d1=randi(5);
+                q=sprintf('%d + %d×%d - %d',a1,b1,c1,d1); a=a1+b1*c1-d1;
+            case 4, f=randi(5); r0=randi([2 3]); n=randi([4 6]);
+                q=sprintf('Geometric seq %d,%d,%d,... term %d?',f,f*r0,f*r0^2,n); a=f*r0^(n-1);
+            case 5, n=randi([5 8]); q=sprintf('What is %d! ?',n); a=factorial(n);
+        end
 end
-
-function [question, answer] = generateMathQuestion(difficulty)
-    % Generate math questions based on difficulty level
-    switch difficulty
-        case 1 % Easy
-            operation = randi(4);
-            if operation == 1
-                a = randi(50); b = randi(50);
-                question = sprintf('What is %d + %d?', a, b);
-                answer   = a + b;
-            elseif operation == 2
-                a = randi([20, 100]); b = randi([1, a-1]);
-                question = sprintf('What is %d - %d?', a, b);
-                answer   = a - b;
-            elseif operation == 3
-                % Multiplication
-                a = randi(12); b = randi(12);
-                question = sprintf('What is %d × %d?', a, b);
-                answer   = a * b;
-            else
-                % Division (exact division)
-                b = randi(12);
-                answer = randi(12);
-                a = b * answer;
-                question = sprintf('What is %d ÷ %d?', a, b);
-            end
-
-        case 2 % Medium - More complex arithmetic and algebra
-            operation = randi(5);
-            if operation == 1
-                % Multi-step arithmetic
-                a = randi(20); b = randi(20); c = randi(10);
-                question = sprintf('What is (%d + %d) × %d?', a, b, c);
-                answer   = (a + b) * c;
-            elseif operation == 2
-                % Percentages
-                whole   = randi([50, 200]);
-                percent = randi([10, 90]);
-                question = sprintf('What is %d%% of %d?', percent, whole);
-                answer   = (percent / 100) * whole;
-            elseif operation == 3
-                % Square numbers
-                a = randi(15);
-                question = sprintf('What is %d²?', a);
-                answer   = a^2;
-            elseif operation == 4
-                % Simple equations: x + a = b
-                x = randi(50); a = randi(30); b = x + a;
-                question = sprintf('Solve for x: x + %d = %d', a, b);
-                answer   = x;
-            else
-                % Averages
-                a = randi(50); b = randi(50); c = randi(50);
-                question = sprintf('What is the average of %d, %d, and %d?', a, b, c);
-                answer   = (a + b + c) / 3;
-            end
-
-        case 3 % Hard - Advanced math
-            operation = randi(5);
-            if operation == 1
-                % Quadratic evaluation
-                a = randi(5); b = randi(10); c = randi(20); x = randi(10);
-                question = sprintf('Evaluate %dx² + %dx + %d when x = %d', a, b, c, x);
-                answer   = a*x^2 + b*x + c;
-            elseif operation == 2
-                % Exponentials
-                base = randi([2, 5]); exp = randi([3, 6]);
-                question = sprintf('What is %d^%d?', base, exp);
-                answer   = base^exp;
-            elseif operation == 3
-                % Order of operations
-                a = randi(10); b = randi(10); c = randi(10); d = randi(5);
-                question = sprintf('What is %d + %d × %d - %d?', a, b, c, d);
-                answer   = a + b * c - d;
-            elseif operation == 4
-                % Geometric sequence
-                first = randi(5); ratio = randi([2, 3]); n = randi([4, 6]);
-                question = sprintf('In geometric sequence %d, %d, %d, ... what is term %d?', ...
-                    first, first*ratio, first*ratio^2, n);
-                answer   = first * ratio^(n-1);
-            else
-                % Factorials
-                n = randi([5, 8]);
-                question = sprintf('What is %d! (factorial)?', n);
-                answer   = factorial(n);
-            end
-    end
-
-    % Round answer to avoid floating point issues
-    answer = round(answer * 100) / 100;
+a=round(a*100)/100;
 end
