@@ -1,0 +1,6 @@
+function updateStatus(status_label, status_msg) 
+
+status_label.Text = status_msg; 
+drawnow; 
+
+end
